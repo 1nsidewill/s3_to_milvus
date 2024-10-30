@@ -14,6 +14,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pathlib import Path
 from datetime import datetime
 import logging
+import time
 from bs4 import BeautifulSoup
 
 # Configure logging
@@ -26,6 +27,8 @@ app = FastAPI()
 milvus_url = os.getenv("MILVUS_URL")
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
 aws_secret_key = os.getenv("AWS_SECRET_KEY")
+notion_token = os.getenv("NOTION_TOKEN")
+notion_database_id = os.getenv("NOTION_DATABASE_ID")
 s3_client = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
 connections.connect(host=milvus_url.split(":")[0], port=milvus_url.split(":")[1])
 
@@ -100,6 +103,7 @@ def create_index_if_not_exists(collection: Collection):
         print("Index created successfully.")
 
 async def handle_document_processing(bucket_name: str, file_key: str, metadata: DocumentMetadata):
+    start_time = time.time()
     file_path = await download_file_from_s3(bucket_name, file_key)
     parsed_data_directory = os.path.join(os.path.dirname(file_path), "parsed_data")
     os.makedirs(parsed_data_directory, exist_ok=True)
@@ -120,7 +124,10 @@ async def handle_document_processing(bucket_name: str, file_key: str, metadata: 
             await insert_to_milvus(output_path, metadata)
         else:
             print(f"Skipping Milvus insertion for {file_path} due to OCR failure.")
-
+    
+    elapsed_time = time.time() - start_time
+    await send_notion_notification(metadata, "processed", elapsed_time, success)
+    
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
     local_file_path = f"data/{file_key}"
     os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
@@ -182,7 +189,7 @@ async def download_inference_result(download_url: str, output_file: str):
                 img_tag.insert_before(img_tag['alt'])
             img_tag.decompose()
         clean_text = soup.get_text(strip=True)
-        async with aiofiles.open(output_file, 'w') as output:
+        async with aiofiles.open(output_file + ".html", 'w') as output:
             await output.write(clean_text)
 
 async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_size: int = 1000, chunk_overlap: int = 100):
@@ -220,11 +227,55 @@ async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_s
 def generate_embeddings(texts: List[str]) -> List[List[float]]:
     return OpenAIEmbeddings(openai_api_key=os.getenv("OPENAI_API_KEY"), model="text-embedding-3-large").embed_documents(texts)
 
-# Function to handle document deletion in Milvus using metadata
 async def delete_from_milvus(metadata: DocumentMetadata):
+    start_time = time.time()
     collection = Collection(metadata.collection_name)
-    # Modify deletion expression to include file_date
     expr = f'file_name == "{metadata.filename}" && file_date == "{metadata.file_date}"'
     collection.delete(expr)
     collection.load()
-    print(f"Deleted entities matching filename '{metadata.filename}' and date '{metadata.file_date}' from collection '{metadata.collection_name}'.")
+
+    elapsed_time = time.time() - start_time
+    await send_notion_notification(metadata, "deleted", elapsed_time, True)
+
+async def send_notion_notification(metadata: DocumentMetadata, action: str, elapsed_time: float, success: bool):
+    status = "Success" if success else "Failure"
+    message = f"The file '{metadata.filename}' was {action} with {status} in {elapsed_time:.2f} seconds."
+    notification_time = datetime.now().isoformat()
+    
+    headers = {
+        "Authorization": f"Bearer {notion_token}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"  # Notion API version
+    }
+    
+    # Data payload for Notion API
+    data = {
+        "parent": {"database_id": notion_database_id},
+        "properties": {
+            "Title": {
+                "title": [{"text": {"content": metadata.filename}}]
+            },
+            "Status": {
+                "select": {"name": status}
+            },
+            "Action": {
+                "rich_text": [{"text": {"content": action}}]
+            },
+            "Elapsed Time (s)": {
+                "number": elapsed_time
+            },
+            "Timestamp": {
+                "date": {"start": notification_time}
+            },
+            "Message": {
+                "rich_text": [{"text": {"content": message}}]
+            }
+        }
+    }
+    
+    response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=data)
+    
+    if response.status_code == 200:
+        logger.info("Notion notification added successfully.")
+    else:
+        logger.error("Failed to send Notion notification: %s", response.text)
