@@ -125,7 +125,7 @@ async def handle_document_processing(bucket_name: str, file_key: str, metadata: 
         else:
             print(f"Skipping Milvus insertion for {file_path} due to OCR failure.")
     
-    elapsed_time = time.time() - start_time
+    elapsed_time = round(time.time() - start_time, 2)
     await send_notion_notification(metadata, "processed", elapsed_time, success)
     
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
@@ -234,7 +234,7 @@ async def delete_from_milvus(metadata: DocumentMetadata):
     collection.delete(expr)
     collection.load()
 
-    elapsed_time = time.time() - start_time
+    elapsed_time = round(time.time() - start_time, 2)
     await send_notion_notification(metadata, "deleted", elapsed_time, True)
 
 async def send_notion_notification(metadata: DocumentMetadata, action: str, elapsed_time: float, success: bool):
