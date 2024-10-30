@@ -10,8 +10,7 @@ COPY pyproject.toml poetry.lock /app/
 # Install Poetry
 RUN pip install poetry && \
     poetry config virtualenvs.in-project true && \
-    poetry install --no-root && \
-    poetry shell
+    poetry install --no-root
 
 # Copy the entire project into the container
 COPY . /app
