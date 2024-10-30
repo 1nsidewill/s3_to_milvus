@@ -1,0 +1,5 @@
+# Ignore unnecessary files and directories
+.git
+__pycache__
+.env
+.vscode
