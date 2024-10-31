@@ -243,21 +243,28 @@ async def call_upstage_api(input_file: str, output_file: str) -> bool:
         response = requests.post(UPSTAGE_API_URL, headers=headers, files={"document": file_data}, data={"ocr": "force"})
     
     if response.status_code == 202:
-        request_id = response.json()["request_id"]
+        request_id = response.json().get("request_id")
         logger.info(f"Received request_id: {request_id} for file '{input_file}'")
         return await poll_for_result(request_id, output_file)
     else:
-        logger.error(f"Error processing file '{input_file}': {response.status_code} - {response.text}")
+        logger.error(f"Error processing file '{input_file}' with Upstage API: {response.status_code} - {response.text}")
         return False
 
 async def poll_for_result(request_id: str, output_file: str) -> bool:
-    logger.info(f"Polling for result of request_id: {request_id}")
-    while True:
-        response = requests.get(f"https://api.upstage.ai/v1/document-ai/requests/{request_id}", headers={"Authorization": f"Bearer {os.getenv('UPSTAGE_API_KEY')}"})
+    logger.info(f"Starting polling for result of request_id: {request_id}")
+    attempt = 0
+    max_attempts = 10  # Limit the number of attempts
+
+    while attempt < max_attempts:
+        attempt += 1
+        response = requests.get(
+            f"https://api.upstage.ai/v1/document-ai/requests/{request_id}",
+            headers={"Authorization": f"Bearer {os.getenv('UPSTAGE_API_KEY')}"}
+        )
         
         if response.status_code == 200:
-            status = response.json()["status"]
-            logger.info(f"Polling status for request_id {request_id}: {status}")
+            status = response.json().get("status")
+            logger.info(f"Polling attempt {attempt} for request_id {request_id}: status = {status}")
             
             if status == "completed":
                 download_url = response.json()["batches"][0]["download_url"]
@@ -273,25 +280,39 @@ async def poll_for_result(request_id: str, output_file: str) -> bool:
 
         await asyncio.sleep(3)  # Polling interval
 
+    logger.error(f"Max polling attempts reached for request_id {request_id} without completion")
+    return False
+
 async def download_inference_result(download_url: str, output_file: str):
-    logger.info(f"Downloading inference result from '{download_url}'")
+    logger.info(f"Attempting to download inference result from '{download_url}'")
     response = requests.get(download_url)
     
     if response.status_code == 200:
         logger.info(f"Successfully downloaded content for '{output_file}'")
-        soup = BeautifulSoup(response.json()['content']['html'], "html.parser")
-        
-        for img_tag in soup.find_all('img'):
-            if img_tag.has_attr('alt'):
-                img_tag.insert_before(img_tag['alt'])
-            img_tag.decompose()
-        
-        clean_text = soup.get_text(strip=True)
-        async with aiofiles.open(output_file + ".html", 'w') as output:
-            await output.write(clean_text)
+        try:
+            # Parse HTML and remove image tags, inserting alt text
+            content = response.json().get('content', {}).get('html', '')
+            if not content:
+                logger.error(f"No 'html' content found in response for '{output_file}'")
+                return False
+
+            soup = BeautifulSoup(content, "html.parser")
+            for img_tag in soup.find_all('img'):
+                if img_tag.has_attr('alt'):
+                    img_tag.insert_before(img_tag['alt'])
+                img_tag.decompose()
+            
+            clean_text = soup.get_text(strip=True)
+            async with aiofiles.open(output_file + ".html", 'w') as output:
+                await output.write(clean_text)
+            return True
+        except Exception as e:
+            logger.error(f"Error processing downloaded content for '{output_file}': {e}")
+            return False
     else:
         logger.error(f"Failed to download inference result: {response.status_code} - {response.text}")
-
+        return False
+    
 async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_size: int = 1000, chunk_overlap: int = 100):
     logger.info(f"Reading OCR result from '{output_file}.html'")
     async with aiofiles.open(output_file + ".html", 'r') as file:
