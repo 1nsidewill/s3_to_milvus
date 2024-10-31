@@ -125,36 +125,61 @@ def create_index_if_not_exists(collection: Collection):
 
 async def handle_document_processing(bucket_name: str, file_key: str, metadata: DocumentMetadata):
     start_time = time.time()
-    # Log bucket and file information before downloading
+    logger.info(f"Starting processing for file '{file_key}' in bucket '{bucket_name}'")
+
+    # Attempt to download the file
     logger.info(f"Attempting to download file '{file_key}' from bucket '{bucket_name}'")
     file_path = await download_file_from_s3(bucket_name, file_key)
     if file_path is None:
-        # Log if file download fails and skip further processing
-        logger.error("File download failed, skipping processing for %s/%s", bucket_name, file_key)
+        logger.error("File download failed. Skipping processing for %s/%s", bucket_name, file_key)
         return {"status": "File not found, processing skipped"}
-    
+    logger.info(f"File successfully downloaded to '{file_path}'")
+
+    # Set up directory for parsed data
     parsed_data_directory = os.path.join(os.path.dirname(file_path), "parsed_data")
     os.makedirs(parsed_data_directory, exist_ok=True)
+    logger.info(f"Parsed data directory created at '{parsed_data_directory}'")
 
-    if os.path.getsize(file_path) > 50 * 1024 * 1024:
+    # Check file size and decide whether to split
+    file_size = os.path.getsize(file_path)
+    logger.info(f"File size of '{file_path}' is {file_size} bytes")
+
+    if file_size > 50 * 1024 * 1024:
+        # If file is large, split it
+        logger.info("File is large, initiating split operation")
         split_files = split_pdf(file_path)
+        logger.info(f"Split operation completed, total chunks created: {len(split_files)}")
+
+        # Process each split file
         for split_file in split_files:
             output_path = os.path.join(parsed_data_directory, f"{os.path.basename(split_file)}_parsed")
+            logger.info(f"Calling Upstage API for split file '{split_file}'")
+
             success = await call_upstage_api(split_file, output_path)
             if success:
+                logger.info(f"Upstage API processing successful for '{split_file}', inserting to Milvus")
                 await insert_to_milvus(output_path, metadata)
             else:
-                print(f"Skipping Milvus insertion for {split_file} due to OCR failure.")
+                logger.warning(f"Skipping Milvus insertion for '{split_file}' due to OCR failure.")
     else:
+        # Process single file if it's not large
         output_path = os.path.join(parsed_data_directory, f"{os.path.basename(file_path)}")
+        logger.info("Calling Upstage API for single file")
+        
         success = await call_upstage_api(file_path, output_path)
         if success:
+            logger.info(f"Upstage API processing successful for '{file_path}', inserting to Milvus")
             await insert_to_milvus(output_path, metadata)
         else:
-            print(f"Skipping Milvus insertion for {file_path} due to OCR failure.")
+            logger.warning(f"Skipping Milvus insertion for '{file_path}' due to OCR failure.")
     
+    # Final logging for completion
     elapsed_time = round(time.time() - start_time, 2)
+    logger.info(f"Completed processing for '{file_key}'. Total time: {elapsed_time} seconds")
     await send_notion_notification(metadata, "processed", elapsed_time, success)
+    
+    return {"status": "Processing completed", "elapsed_time": elapsed_time, "success": success}
+
     
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
     # Decode URL-encoded characters in the file key
