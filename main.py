@@ -72,6 +72,7 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     metadata = DocumentMetadata(filename=filename, file_date=str(file_date), collection_name=prefix_name)
 
     # Determine the event type dynamically
+    print(event.event_type)
     event_type = "upload" if event.event_type == "ObjectCreated" else "delete"  # Adjust as needed
 
     # Initiate background tasks based on event type
