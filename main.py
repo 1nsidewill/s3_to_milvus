@@ -157,11 +157,27 @@ async def handle_document_processing(bucket_name: str, file_key: str, metadata: 
     await send_notion_notification(metadata, "processed", elapsed_time, success)
     
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
-    local_file_path = f"data/{file_key}"
+    # Decode URL-encoded characters in the file key
+    decoded_key = unquote(file_key)
+    
+    # Set up local path for downloaded file
+    local_file_path = f"data/{decoded_key}"
     os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-    s3_client.download_file(bucket_name, file_key, local_file_path)
-    logger.info("File downloaded successfully: %s", local_file_path)
-    return local_file_path
+    
+    # Log file download attempt
+    logger.info(f"Attempting to download file '{decoded_key}' from bucket '{bucket_name}' to '{local_file_path}'")
+    
+    # Attempt download with decoded key
+    try:
+        s3_client.download_file(bucket_name, decoded_key, local_file_path)
+        logger.info(f"File downloaded successfully: {local_file_path}")
+        return local_file_path
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            logger.error(f"Object not found in bucket '{bucket_name}' with key '{decoded_key}'")
+        else:
+            logger.error(f"An error occurred: {e}")
+        return None
 
 def split_pdf(input_file: str) -> List[str]:
     split_files = []
