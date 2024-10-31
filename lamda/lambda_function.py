@@ -3,6 +3,7 @@ import requests
 import logging
 import time
 from datetime import datetime
+from urllib.parse import unquote
 
 # Configure logging
 logger = logging.getLogger()
@@ -56,13 +57,37 @@ def send_notion_notification(filename: str, action: str, status: str, elapsed_ti
         logger.error("Failed to send Notion notification: %s", response.text)
 
 def lambda_handler(event, context):
-    # Extract S3 bucket and object key from the event
     try:
         bucket_name = event['Records'][0]['s3']['bucket']['name']
         file_key = event['Records'][0]['s3']['object']['key']
-        event_type = "upload"  # or set dynamically based on your event trigger
+        
+        # Dynamically set the event_type based on the event name
+        event_name = event['Records'][0]['eventName']
+        if "ObjectCreated" in event_name:
+            event_type = "upload"
+        elif "ObjectRemoved" in event_name:
+            event_type = "delete"
+        else:
+            print(f"Unrecognized event type: {event_name}")
+            return {
+                "statusCode": 400,
+                "body": json.dumps(f"Unrecognized event type: {event_name}")
+            }
+        
+        # Check if file_key represents a file (not a folder)
+        if file_key.endswith('/'):
+            print("Folder creation detected; no action taken.")
+            return {
+                "statusCode": 200,
+                "body": json.dumps("Folder creation detected; no action taken.")
+            }
+        
+        # Decode the file name for better readability
+        decoded_file_key = unquote(file_key)
+        print(f"Processing event: bucket={bucket_name}, file_key={decoded_file_key}, event_type={event_type}")
+
     except KeyError as e:
-        logger.error(f"Error parsing S3 event: {e}")
+        print(f"Error parsing S3 event: {e}")
         return {
             "statusCode": 400,
             "body": json.dumps(f"Error parsing S3 event: {str(e)}")
@@ -81,19 +106,19 @@ def lambda_handler(event, context):
     # Measure time for FastAPI request
     start_time = time.time()
     status = "Passed"  # Default status if request is sent successfully
-    action = "upload" if event_type == "upload" else "delete"
+    action = event_type  # Use dynamic action based on event type
 
     # Make the HTTP POST request to the FastAPI endpoint
     try:
         response = requests.post(fastapi_url, json=payload)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error calling FastAPI endpoint: {e}")
+        print(f"Error calling FastAPI endpoint: {e}")
         status = "Failure"  # Update status if there was an error
     finally:
         elapsed_time = time.time() - start_time
         # Send Notion notification with status
-        send_notion_notification(filename=file_key, action=action, status=status, elapsed_time=elapsed_time)
+        send_notion_notification(filename=decoded_file_key, action=action, status=status, elapsed_time=elapsed_time)
     
     # Return the Lambda function status
     return {

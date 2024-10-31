@@ -77,9 +77,10 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     else:
         raise HTTPException(status_code=400, detail="Invalid event type")
 
-def get_file_modified_date(bucket_name: str, file_key: str) -> str:
-    response = s3_client.head_object(Bucket=bucket_name, Key=file_key)
-    return response["LastModified"].isoformat()
+def get_file_modified_date(bucket_name, file_key):
+    decoded_key = unquote(file_key)  # Decode URL-encoded characters
+    response = s3_client.head_object(Bucket=bucket_name, Key=decoded_key)
+    return response['LastModified']
 
 def create_milvus_collection(collection_name: str):
     fields = [
