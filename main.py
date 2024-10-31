@@ -125,61 +125,68 @@ def create_index_if_not_exists(collection: Collection):
 
 async def handle_document_processing(bucket_name: str, file_key: str, metadata: DocumentMetadata):
     start_time = time.time()
-    logger.info(f"Starting processing for file '{file_key}' in bucket '{bucket_name}'")
+    logger.info(f"Started processing for file '{file_key}' in bucket '{bucket_name}'")
 
-    # Attempt to download the file
+    # Step 1: Attempt to download the file
     logger.info(f"Attempting to download file '{file_key}' from bucket '{bucket_name}'")
     file_path = await download_file_from_s3(bucket_name, file_key)
-    if file_path is None:
-        logger.error("File download failed. Skipping processing for %s/%s", bucket_name, file_key)
+    if not file_path:
+        logger.error("File download failed. Skipping further processing for %s/%s", bucket_name, file_key)
+        await send_notion_notification(metadata, "processed", 0, False)  # Notify on failure
         return {"status": "File not found, processing skipped"}
+
     logger.info(f"File successfully downloaded to '{file_path}'")
 
-    # Set up directory for parsed data
+    # Step 2: Set up parsed data directory
     parsed_data_directory = os.path.join(os.path.dirname(file_path), "parsed_data")
     os.makedirs(parsed_data_directory, exist_ok=True)
     logger.info(f"Parsed data directory created at '{parsed_data_directory}'")
 
-    # Check file size and decide whether to split
+    # Step 3: Check file size and process accordingly
     file_size = os.path.getsize(file_path)
-    logger.info(f"File size of '{file_path}' is {file_size} bytes")
+    logger.info(f"File size of '{file_path}': {file_size} bytes")
 
+    # Step 4: Process file based on size
     if file_size > 50 * 1024 * 1024:
-        # If file is large, split it
-        logger.info("File is large, initiating split operation")
+        logger.info("Large file detected, initiating split operation")
         split_files = split_pdf(file_path)
-        logger.info(f"Split operation completed, total chunks created: {len(split_files)}")
+        if not split_files:
+            logger.error(f"File splitting failed for '{file_path}'.")
+            await send_notion_notification(metadata, "processed", round(time.time() - start_time, 2), False)
+            return {"status": "File split failed"}
 
         # Process each split file
         for split_file in split_files:
-            output_path = os.path.join(parsed_data_directory, f"{os.path.basename(split_file)}_parsed")
-            logger.info(f"Calling Upstage API for split file '{split_file}'")
-
-            success = await call_upstage_api(split_file, output_path)
-            if success:
-                logger.info(f"Upstage API processing successful for '{split_file}', inserting to Milvus")
-                await insert_to_milvus(output_path, metadata)
-            else:
-                logger.warning(f"Skipping Milvus insertion for '{split_file}' due to OCR failure.")
+            logger.info(f"Processing split file '{split_file}'")
+            success = await process_single_file(split_file, parsed_data_directory, metadata)
+            if not success:
+                logger.warning(f"OCR processing failed for split file '{split_file}'")
     else:
-        # Process single file if it's not large
-        output_path = os.path.join(parsed_data_directory, f"{os.path.basename(file_path)}")
-        logger.info("Calling Upstage API for single file")
-        
-        success = await call_upstage_api(file_path, output_path)
-        if success:
-            logger.info(f"Upstage API processing successful for '{file_path}', inserting to Milvus")
-            await insert_to_milvus(output_path, metadata)
-        else:
-            logger.warning(f"Skipping Milvus insertion for '{file_path}' due to OCR failure.")
-    
-    # Final logging for completion
+        # Process the entire file if it's not large
+        success = await process_single_file(file_path, parsed_data_directory, metadata)
+
+    # Step 5: Finalize and send notification
     elapsed_time = round(time.time() - start_time, 2)
     logger.info(f"Completed processing for '{file_key}'. Total time: {elapsed_time} seconds")
     await send_notion_notification(metadata, "processed", elapsed_time, success)
     
     return {"status": "Processing completed", "elapsed_time": elapsed_time, "success": success}
 
+async def process_single_file(input_file: str, parsed_data_directory: str, metadata: DocumentMetadata) -> bool:
+    """
+    Process a single file by calling the OCR API and inserting into Milvus if successful.
+    """
+    output_path = os.path.join(parsed_data_directory, f"{os.path.basename(input_file)}_parsed")
+    logger.info(f"Calling Upstage API for file '{input_file}'")
+
+    success = await call_upstage_api(input_file, output_path)
+    if success:
+        logger.info(f"OCR successful for '{input_file}', proceeding to insert into Milvus")
+        await insert_to_milvus(output_path, metadata)
+    else:
+        logger.warning(f"OCR failed for '{input_file}', skipping Milvus insertion")
+
+    return success
     
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
     # Decode URL-encoded characters in the file key
@@ -231,47 +238,72 @@ async def call_upstage_api(input_file: str, output_file: str) -> bool:
     UPSTAGE_API_KEY = os.getenv("UPSTAGE_API_KEY")
     headers = {"Authorization": f"Bearer {UPSTAGE_API_KEY}"}
 
+    logger.info(f"Sending file '{input_file}' to Upstage API at '{UPSTAGE_API_URL}'")
     with open(input_file, "rb") as file_data:
         response = requests.post(UPSTAGE_API_URL, headers=headers, files={"document": file_data}, data={"ocr": "force"})
+    
     if response.status_code == 202:
-        return await poll_for_result(response.json()["request_id"], output_file)
+        request_id = response.json()["request_id"]
+        logger.info(f"Received request_id: {request_id} for file '{input_file}'")
+        return await poll_for_result(request_id, output_file)
     else:
-        logger.error(f"Error processing file {input_file}: {response.text}")
+        logger.error(f"Error processing file '{input_file}': {response.status_code} - {response.text}")
         return False
 
 async def poll_for_result(request_id: str, output_file: str) -> bool:
+    logger.info(f"Polling for result of request_id: {request_id}")
     while True:
         response = requests.get(f"https://api.upstage.ai/v1/document-ai/requests/{request_id}", headers={"Authorization": f"Bearer {os.getenv('UPSTAGE_API_KEY')}"})
-        if response.status_code == 200 and response.json()["status"] == "completed":
-            await download_inference_result(response.json()["batches"][0]["download_url"], output_file)
-            return True
-        elif response.status_code != 200 or response.json()["status"] == "failed":
+        
+        if response.status_code == 200:
+            status = response.json()["status"]
+            logger.info(f"Polling status for request_id {request_id}: {status}")
+            
+            if status == "completed":
+                download_url = response.json()["batches"][0]["download_url"]
+                logger.info(f"Processing completed for request_id: {request_id}, downloading result from '{download_url}'")
+                await download_inference_result(download_url, output_file)
+                return True
+            elif status == "failed":
+                logger.error(f"Upstage API processing failed for request_id: {request_id}")
+                return False
+        else:
+            logger.error(f"Error polling Upstage API for request_id {request_id}: {response.status_code} - {response.text}")
             return False
-        await asyncio.sleep(3)
+
+        await asyncio.sleep(3)  # Polling interval
 
 async def download_inference_result(download_url: str, output_file: str):
+    logger.info(f"Downloading inference result from '{download_url}'")
     response = requests.get(download_url)
+    
     if response.status_code == 200:
+        logger.info(f"Successfully downloaded content for '{output_file}'")
         soup = BeautifulSoup(response.json()['content']['html'], "html.parser")
+        
         for img_tag in soup.find_all('img'):
             if img_tag.has_attr('alt'):
                 img_tag.insert_before(img_tag['alt'])
             img_tag.decompose()
+        
         clean_text = soup.get_text(strip=True)
         async with aiofiles.open(output_file + ".html", 'w') as output:
             await output.write(clean_text)
+    else:
+        logger.error(f"Failed to download inference result: {response.status_code} - {response.text}")
 
 async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_size: int = 1000, chunk_overlap: int = 100):
-    # Read OCR output file
+    logger.info(f"Reading OCR result from '{output_file}.html'")
     async with aiofiles.open(output_file + ".html", 'r') as file:
         ocr_text = await file.read()
 
-    # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     chunks = text_splitter.split_text(ocr_text)
-    
-    # Generate embeddings for all chunks
+    logger.info(f"Split OCR text into {len(chunks)} chunks")
+
     embeddings = generate_embeddings(chunks)
+    logger.info("Embeddings generated, preparing data for Milvus insertion")
+
     insert_data = [
         embeddings, 
         [metadata.filename] * len(chunks), 
@@ -279,19 +311,19 @@ async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_s
         chunks
     ]
 
-    # Insert data into Milvus
     collection = Collection(metadata.collection_name)
+    logger.info(f"Inserting data into Milvus collection: {metadata.collection_name}")
     collection.insert(insert_data)
     collection.flush()
     create_index_if_not_exists(collection)
     collection.load()
+    logger.info("Data inserted and indexed in Milvus successfully")
 
-    # Delete the original file after successful insertion
     try:
         os.remove(output_file + ".html")
-        print(f"File '{output_file}.html' deleted successfully after insertion.")
+        logger.info(f"Temporary file '{output_file}.html' deleted after insertion.")
     except Exception as e:
-        print(f"Error deleting file '{output_file}.html': {e}")
+        logger.error(f"Error deleting temporary file '{output_file}.html': {e}")
 
 def generate_embeddings(texts: List[str]) -> List[List[float]]:
     return OpenAIEmbeddings(openai_api_key=os.getenv("OPENAI_API_KEY"), model="text-embedding-3-large").embed_documents(texts)
