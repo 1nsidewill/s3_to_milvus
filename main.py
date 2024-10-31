@@ -125,7 +125,14 @@ def create_index_if_not_exists(collection: Collection):
 
 async def handle_document_processing(bucket_name: str, file_key: str, metadata: DocumentMetadata):
     start_time = time.time()
+    # Log bucket and file information before downloading
+    logger.info(f"Attempting to download file '{file_key}' from bucket '{bucket_name}'")
     file_path = await download_file_from_s3(bucket_name, file_key)
+    if file_path is None:
+        # Log if file download fails and skip further processing
+        logger.error("File download failed, skipping processing for %s/%s", bucket_name, file_key)
+        return {"status": "File not found, processing skipped"}
+    
     parsed_data_directory = os.path.join(os.path.dirname(file_path), "parsed_data")
     os.makedirs(parsed_data_directory, exist_ok=True)
 
