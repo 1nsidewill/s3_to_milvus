@@ -241,6 +241,15 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
 
 async def delete_from_milvus(metadata: DocumentMetadata):
     start_time = time.time()
+    
+    # Check if the collection exists before attempting deletion
+    if not has_collection(metadata.collection_name):
+        logger.warning(f"Collection '{metadata.collection_name}' does not exist. Skipping deletion.")
+        elapsed_time = round(time.time() - start_time, 2)
+        await send_notion_notification(metadata, "deletion attempted", elapsed_time, False)
+        return {"status": "Collection not found; deletion skipped"}
+
+    # Proceed with deletion if collection exists
     collection = Collection(metadata.collection_name)
     expr = f'file_name == "{metadata.filename}" && file_date == "{metadata.file_date}"'
     collection.delete(expr)
@@ -248,6 +257,8 @@ async def delete_from_milvus(metadata: DocumentMetadata):
 
     elapsed_time = round(time.time() - start_time, 2)
     await send_notion_notification(metadata, "deleted", elapsed_time, True)
+    return {"status": "Deletion completed"}
+
 
 async def send_notion_notification(metadata: DocumentMetadata, action: str, elapsed_time: float, success: bool):
     status = "Success" if success else "Failure"
