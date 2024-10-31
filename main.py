@@ -17,6 +17,7 @@ import logging
 import time
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
+from botocore.exceptions import ClientError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -90,8 +91,15 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
 
 def get_file_modified_date(bucket_name, file_key):
     decoded_key = unquote(file_key)  # Decode URL-encoded characters
-    response = s3_client.head_object(Bucket=bucket_name, Key=decoded_key)
-    return response['LastModified']
+    try:
+        response = s3_client.head_object(Bucket=bucket_name, Key=decoded_key)
+        return response['LastModified']
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            print(f"Object not found in bucket '{bucket_name}' with key '{decoded_key}'")
+        else:
+            print(f"An error occurred: {e}")
+        return None
 
 def create_milvus_collection(collection_name: str):
     fields = [
