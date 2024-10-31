@@ -27,7 +27,8 @@
 
 ---
 
-![image.png](https://prod-files-secure.s3.us-west-2.amazonaws.com/c72bdac6-4142-419d-b3d0-af38f7e67b91/912fed47-b754-417d-a1fc-d1daf4ad831b/image.png)
+![image](https://github.com/user-attachments/assets/31136aac-2f03-4543-bf27-7a8dfe4e43af)
+
 
 ## 2. 프로세스 흐름
 
