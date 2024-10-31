@@ -248,12 +248,13 @@ async def send_notion_notification(metadata: DocumentMetadata, action: str, elap
         "Notion-Version": "2022-06-28"  # Notion API version
     }
     
+    title = metadata.collection_name + "/" + metadata.filename
     # Data payload for Notion APIa
     data = {
         "parent": {"database_id": notion_database_id},
         "properties": {
             "Title": {
-                "title": [{"text": {"content": metadata.filename}}]
+                "title": [{"text": {"content": title}}]
             },
             "Status": {
                 "select": {"name": status}
