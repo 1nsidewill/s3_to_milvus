@@ -57,22 +57,32 @@ class DocumentMetadata(BaseModel):
 # Endpoint to process S3 events
 @app.post("/process_s3_event")
 async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
+    # Check if the event is for a folder creation and skip processing
+    if event.file_key.endswith('/'):
+        return {"status": "Folder creation event ignored"}
+
+    # Split and decode the file key
     prefix_name = event.file_key.split('/')[0]
-    filename = event.file_key.split('/')[-1]
-    file_date = get_file_modified_date(event.bucket_name, event.file_key)
+    filename = unquote(event.file_key.split('/')[-1])
+    
+    # Get modified date and convert to string for metadata
+    file_date = get_file_modified_date(event.bucket_name, event.file_key).isoformat()
 
     # Prepare metadata as a Pydantic model
     metadata = DocumentMetadata(filename=filename, file_date=file_date, collection_name=prefix_name)
 
-    # Create collection if it doesn't exist
+    # Check if collection exists and create if it does not
     if not has_collection(prefix_name):
         create_milvus_collection(prefix_name)
 
+    # Determine the event type dynamically
+    event_type = "upload" if event['Records'][0]['eventName'].startswith("ObjectCreated") else "delete"
+
     # Initiate background tasks based on event type
-    if event.event_type == "upload":
+    if event_type == "upload":
         background_tasks.add_task(handle_document_processing, event.bucket_name, event.file_key, metadata)
         return {"status": "Processing initiated"}
-    elif event.event_type == "delete":
+    elif event_type == "delete":
         background_tasks.add_task(delete_from_milvus, metadata)
         return {"status": "Deletion initiated"}
     else:
