@@ -1,5 +1,58 @@
 # S3_TO_MILVUS 기술문서
 
+## How To Run
+
+### 프로젝트 클론 및 환경 설정
+
+1. **GitHub에서 코드 클론**
+    - 다음 명령어로 GitHub 리포지토리에서 프로젝트를 클론합니다:
+    
+    ```bash
+    git clone <https://github.com/1nsidewill/s3_to_milvus.git>
+    cd s3_to_milvus
+    ```
+    
+2. **Python 버전 확인**
+    - Python 3.11.10 버전이 필요합니다. 아래 명령어로 Python 버전을 확인하세요:
+    
+    ```bash
+    python3 --version
+    ```
+    
+3. **Poetry 설치 및 가상 환경 설정**
+    - 프로젝트 의존성 관리를 위해 **Poetry**를 설치합니다. Poetry가 없는 경우 다음 명령어로 설치하세요:
+    
+    ```bash
+    curl -sSL <https://install.python-poetry.org> | python3 -
+    ```
+    
+    - 가상 환경을 프로젝트 폴더 내부에 생성하도록 설정:
+    
+    ```bash
+    poetry config virtualenvs.in-project true
+    ```
+    
+4. **Poetry로 의존성 설치**
+    - 다음 명령어를 통해 프로젝트의 모든 의존성을 설치합니다:
+    
+    ```bash
+    poetry install
+    ```
+    
+5. **Poetry 쉘 활성화**
+    - 가상 환경을 활성화하여 프로젝트 환경에 들어갑니다:
+    
+    ```bash
+    poetry shell
+    ```
+    
+6. **FastAPI 서버 실행**
+    - FastAPI 서버를 디버그 모드로 실행하여 테스트합니다:
+    
+    ```bash
+    uvicorn main:app --host 0.0.0.0 --port 8510 --reload
+    ```
+
 # 프로젝트 개요: AI 문서 처리 자동화 시스템
 
 본 시스템은 AWS 기반의 서버리스 아키텍처로, S3에 업로드되는 파일을 Lambda를 통해 자동 처리하여 문서 내용을 Milvus에 임베딩하여 저장하고, Notion에 기록을 남기는 **자동화 솔루션**입니다
