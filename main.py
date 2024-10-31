@@ -71,15 +71,15 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     # Prepare metadata as a Pydantic model
     metadata = DocumentMetadata(filename=filename, file_date=str(file_date), collection_name=prefix_name)
 
-    # Check if collection exists and create if it does not
-    if not has_collection(prefix_name):
-        create_milvus_collection(prefix_name)
-
     # Determine the event type dynamically
     event_type = "upload" if event.event_type == "ObjectCreated" else "delete"  # Adjust as needed
 
     # Initiate background tasks based on event type
     if event_type == "upload":
+        # Check if collection exists and create if it does not
+        if not has_collection(prefix_name):
+            create_milvus_collection(prefix_name)
+
         background_tasks.add_task(handle_document_processing, event.bucket_name, event.file_key, metadata)
         return {"status": "Processing initiated"}
     elif event_type == "delete":
