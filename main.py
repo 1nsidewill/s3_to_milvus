@@ -99,7 +99,8 @@ def get_file_modified_date(bucket_name, file_key):
             print(f"Object not found in bucket '{bucket_name}' with key '{decoded_key}'")
         else:
             print(f"An error occurred: {e}")
-        return None
+        # Return current datetime if file not found or other error
+        return datetime.now()
 
 def create_milvus_collection(collection_name: str):
     fields = [
@@ -259,7 +260,7 @@ async def delete_from_milvus(metadata: DocumentMetadata):
 
     # Proceed with deletion if collection exists
     collection = Collection(metadata.collection_name)
-    expr = f'file_name == "{metadata.filename}" && file_date == "{metadata.file_date}"'
+    expr = f'file_name == "{metadata.filename}"'
     collection.delete(expr)
     collection.load()
 
