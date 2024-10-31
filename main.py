@@ -248,7 +248,7 @@ async def send_notion_notification(metadata: DocumentMetadata, action: str, elap
         "Notion-Version": "2022-06-28"  # Notion API version
     }
     
-    # Data payload for Notion API
+    # Data payload for Notion APIa
     data = {
         "parent": {"database_id": notion_database_id},
         "properties": {
