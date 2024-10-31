@@ -16,6 +16,7 @@ from datetime import datetime
 import logging
 import time
 from bs4 import BeautifulSoup
+from urllib.parse import unquote
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
