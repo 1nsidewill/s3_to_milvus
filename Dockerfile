@@ -15,8 +15,9 @@ RUN pip install poetry && \
 # Copy the entire project into the container
 COPY . /app
 
-# Expose the port your FastAPI app will run on
-EXPOSE 8510
+# Set environment to deployment
+ENV ENVIRONMENT=dev
 
-# Command to run FastAPI app with Uvicorn
-CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8510"]
+# Command to start the FastAPI app without running alembic upgrade
+# 마지막 root path 를 실제 traefik 의 root path 와 맞춰줘야 함.
+CMD ["poetry", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--root-path", "/s3_to_milvus"]

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import os
@@ -35,8 +35,8 @@ s3_client = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_acce
 connections.connect(host=milvus_url.split(":")[0], port=milvus_url.split(":")[1])
 
 @app.get("/", include_in_schema=False)
-async def root():
-    return RedirectResponse(url="/docs")
+async def root(request: Request):
+    return RedirectResponse(url=request.scope.get("root_path") +"/docs")
 
 """
 {
