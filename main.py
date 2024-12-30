@@ -18,15 +18,18 @@ import time
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
 from botocore.exceptions import ClientError
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+load_dotenv()
 app = FastAPI()
 
 # Configure AWS S3 and Milvus connections
 milvus_url = os.getenv("MILVUS_URL")
+print(milvus_url)
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
 aws_secret_key = os.getenv("AWS_SECRET_KEY")
 notion_token = os.getenv("NOTION_TOKEN")
