@@ -316,7 +316,7 @@ async def download_inference_result(download_url: str, output_file: str):
         logger.error(f"Failed to download inference result: {response.status_code} - {response.text}")
         return False
     
-async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_size: int = 1000, chunk_overlap: int = 100):
+async def insert_to_milvus(output_file: str, metadata: DocumentMetadata, chunk_size: int = 3000, chunk_overlap: int = 300):
     logger.info(f"Reading OCR result from '{output_file}.html'")
     async with aiofiles.open(output_file + ".html", 'r') as file:
         ocr_text = await file.read()
