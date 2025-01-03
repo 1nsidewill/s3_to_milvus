@@ -12,7 +12,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from datetime import datetime
 import logging
 import time
-from urllib.parse import unquote
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 import pdfplumber
@@ -21,7 +20,6 @@ import aiofiles
 import urllib.parse
 
 # Configure logging
-print('HELLOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -62,7 +60,7 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
         return {"status": "Folder creation event ignored"}
 
     prefix_name = event.file_key.split('/')[0]
-    filename = unquote(event.file_key.split('/')[-1])
+    filename = urllib.parse.unquote_plus(event.file_key.split('/')[-1])
     file_date = get_file_modified_date(event.bucket_name, event.file_key).isoformat()
     metadata = DocumentMetadata(filename=filename, file_date=str(file_date), collection_name=prefix_name)
     event_type = "upload" if event.event_type == "upload" else "delete"
@@ -79,7 +77,7 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="Invalid event type")
 
 def get_file_modified_date(bucket_name, file_key):
-    decoded_key = unquote(file_key)
+    decoded_key = urllib.parse.unquote_plus(file_key)
     try:
         response = s3_client.head_object(Bucket=bucket_name, Key=decoded_key)
         return response['LastModified']
