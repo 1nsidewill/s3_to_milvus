@@ -20,6 +20,8 @@ bs4 = "^0.0.2"
 openai = "^1.52.2"
 tiktoken = "^0.8.0"
 langchain-openai = "^0.2.4"
+pdfplumber = "^0.11.5"
+pdf2image = "^1.17.0"
 
 
 [build-system]
