@@ -21,6 +21,7 @@ import aiofiles
 import urllib.parse
 
 # Configure logging
+print('HELLOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
