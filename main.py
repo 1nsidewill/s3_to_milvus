@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import pdfplumber
 from pdf2image import convert_from_path
 import aiofiles
+import urllib.parse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -213,12 +214,14 @@ async def handle_document_processing(bucket_name: str, file_key: str, metadata: 
     return {"status": "Processing completed", "elapsed_time": elapsed_time, "success": success}
 
 async def download_file_from_s3(bucket_name: str, file_key: str) -> str:
-    decoded_key = unquote(file_key)
+    # Decode the file key (handles '+' as space)
+    decoded_key = urllib.parse.unquote_plus(file_key)
     local_file_path = f"data/{decoded_key}"
     os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
     logger.info(f"Attempting to download file '{decoded_key}' from bucket '{bucket_name}' to '{local_file_path}'")
     
     try:
+        # Download the file from S3
         s3_client.download_file(bucket_name, decoded_key, local_file_path)
         logger.info(f"File downloaded successfully: {local_file_path}")
         return local_file_path
