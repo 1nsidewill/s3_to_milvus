@@ -9,6 +9,7 @@ import boto3
 from pymilvus import Collection, CollectionSchema, FieldSchema, DataType, connections, has_collection
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_milvus.utils.sparse import BM25SparseEmbedding
 from datetime import datetime
 import logging
 import time
@@ -56,6 +57,13 @@ class DocumentMetadata(BaseModel):
 
 @app.post("/process_s3_event")
 async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
+    """
+    {
+        "bucket_name": "aiu-dev-data-bucket",
+        "file_key": "secondary_service/학생부종합전형 평가요소.txt",
+        "event_type": "upload"
+    }
+    """
     if event.file_key.endswith('/'):
         return {"status": "Folder creation event ignored"}
 
@@ -92,6 +100,7 @@ def create_milvus_collection(collection_name: str):
     fields = [
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
         FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=3072),
+        # FieldSchema(name="sparse_vector", dtype=DataType.SPARSE_FLOAT_VECTOR),
         FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=255),
         FieldSchema(name="file_date", dtype=DataType.VARCHAR, max_length=255),
         FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535)
@@ -105,9 +114,15 @@ def create_index_if_not_exists(collection: Collection):
         logger.info("Creating index...")
         collection.create_index(
             field_name="vector",
-            index_params={"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": 16}}
+            index_params={"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": 1}}
         )
-        logger.info("Index created successfully.")
+        logger.info("Dense Index created successfully.")
+
+        # collection.create_index(
+        #     field_name="sparse_vector",
+        #     index_params={"index_type": "SPARSE_INVERTED_INDEX", "metric_type": "IP"}
+        # )
+        # logger.info("Sparse created successfully.")
 
 async def handle_document_processing(bucket_name: str, file_key: str, metadata: DocumentMetadata):
     start_time = time.time()
@@ -266,11 +281,13 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, chunk
         chunks = text_splitter.split_text(document_html)
         logger.info(f"Split OCR text into {len(chunks)} chunks")
 
-        embeddings = generate_embeddings(chunks)
+        dense_embeddings = generate_dense_embeddings(chunks)
+        # sparse_embeddings = generate_sparse_embeddings(chunks)
         logger.info("Embeddings generated, preparing data for Milvus insertion")
 
         insert_data = [
-            embeddings, 
+            dense_embeddings,
+            # sparse_embeddings, 
             [metadata.filename] * len(chunks), 
             [metadata.file_date] * len(chunks), 
             chunks
@@ -288,9 +305,13 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, chunk
         logger.error(f"Error inserting data into Milvus: {e}")
         return False
 
-def generate_embeddings(texts: List[str]) -> List[List[float]]:
-    logger.info("Generating embeddings for text chunks")
+def generate_dense_embeddings(texts: List[str]) -> List[List[float]]:
+    logger.info("Generating dense embeddings for text chunks")
     return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY, model="text-embedding-3-large").embed_documents(texts)
+
+def generate_sparse_embeddings(texts: List[str]) -> List[List[float]]:
+    logger.info("Generating sparse embeddings for text chunks")
+    return BM25SparseEmbedding(corpus=texts).embed_documents()
 
 async def delete_from_milvus(metadata: DocumentMetadata):
     start_time = time.time()
