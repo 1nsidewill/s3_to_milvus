@@ -19,6 +19,7 @@ import pdfplumber
 from pdf2image import convert_from_path
 import aiofiles
 import urllib.parse
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -275,8 +276,13 @@ async def compress_image_pdf(input_pdf: str, output_pdf: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF 압축 중 오류 발생: {str(e)}")
     
-async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, chunk_size: int = 3000, chunk_overlap: int = 300) -> bool:
+async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, default_chunk_size: int = 3000, default_chunk_overlap: int = 300) -> bool:
     try:
+        # Load chunk size and overlap values from TXT
+        chunk_size, chunk_overlap = get_chunk_params_from_txt(metadata.collection_name, default_chunk_size, default_chunk_overlap)
+
+        logger.info(f"Collection Name: {metadata.collection_name}, Chunk Size: {chunk_size}, Chunk Overlap: {chunk_overlap}")
+
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = text_splitter.split_text(document_html)
         logger.info(f"Split OCR text into {len(chunks)} chunks")
@@ -304,6 +310,19 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, chunk
     except Exception as e:
         logger.error(f"Error inserting data into Milvus: {e}")
         return False
+
+def get_chunk_params_from_txt(collection_name: str, default_chunk_size: int, default_chunk_overlap: int):
+    try:
+        with open('chunk_params.txt', 'r') as file:
+            for line in file:
+                parts = line.strip().split('|')
+                if len(parts) == 3 and parts[0] == collection_name:
+                    return int(parts[1]), int(parts[2])
+    except Exception as e:
+        logger.error(f"Error reading chunk parameters from TXT: {e}")
+    
+    # Return default values if no match is found or an error occurs
+    return default_chunk_size, default_chunk_overlap
 
 def generate_dense_embeddings(texts: List[str]) -> List[List[float]]:
     logger.info("Generating dense embeddings for text chunks")
