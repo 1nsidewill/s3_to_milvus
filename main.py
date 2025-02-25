@@ -68,7 +68,7 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     if event.file_key.endswith('/'):
         return {"status": "Folder creation event ignored"}
 
-    prefix_name = event.file_key.split('/')[0]
+    prefix_name = event.file_key.split('/')[1]
     filename = urllib.parse.unquote_plus(event.file_key.split('/')[-1])
     file_date = get_file_modified_date(event.bucket_name, event.file_key).isoformat()
     metadata = DocumentMetadata(filename=filename, file_date=str(file_date), collection_name=prefix_name)
