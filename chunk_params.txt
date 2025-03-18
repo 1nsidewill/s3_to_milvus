@@ -1,1 +1,2 @@
 live_aichat_medical|1000|100
+live_aichat_medical_700|700|70
