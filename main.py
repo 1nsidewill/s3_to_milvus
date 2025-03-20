@@ -115,7 +115,7 @@ def create_index_if_not_exists(collection: Collection):
         logger.info("Creating index...")
         collection.create_index(
             field_name="vector",
-            index_params={"index_type": "IVF_FLAT", "metric_type": "COSINE", "params": {"nlist": 20}}
+            index_params={"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": 1}}
         )
         logger.info("Dense Index created successfully.")
 
