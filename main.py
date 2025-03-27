@@ -36,6 +36,9 @@ upstage_api_key = os.getenv("UPSTAGE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 upstage_api_url = os.getenv("UPSTAGE_API_URL")
 
+AWS_S3_BUCKET_NAME = "aiu-dev-data-bucket"
+CHUNK_PARAM_S3_KEY = "Milvus/chunk_params.txt"
+
 # Configure AWS S3 and Milvus connections
 s3_client = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
 connections.connect(host=milvus_url.split(":")[0], port=milvus_url.split(":")[1])
@@ -301,7 +304,7 @@ async def compress_image_pdf(input_pdf: str, output_pdf: str) -> str:
 async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, default_chunk_size: int = 3000, default_chunk_overlap: int = 300) -> bool:
     try:
         # 📥 Load chunk size and overlap from config
-        chunk_size, chunk_overlap = get_chunk_params_from_txt(
+        chunk_size, chunk_overlap = get_chunk_params_from_s3(
             metadata.collection_name, default_chunk_size, default_chunk_overlap
         )
         logger.info(f"📁 Collection: {metadata.collection_name} | 🔧 Chunk Size: {chunk_size} | 🔁 Overlap: {chunk_overlap}")
@@ -341,31 +344,41 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, defau
         logger.error(f"❌ Error inserting data into Milvus: {e}")
         return False
 
-def get_chunk_params_from_txt(collection_name: str, default_chunk_size: int, default_chunk_overlap: int):
+async def get_chunk_params_from_s3(collection_name: str, default_chunk_size: int, default_chunk_overlap: int):
     try:
-        logger.info(f"🔍 Searching chunk params for collection: '{collection_name}'")
+        logger.info(f"🔍 Searching chunk params for collection: '{collection_name}' from S3")
 
-        with open('chunk_params.txt', 'r') as file:
-            for line_number, line in enumerate(file, start=1):
-                logger.debug(f"📄 Line {line_number}: {repr(line)}")
-                parts = line.strip().split('|')
+        # S3에서 파일 내용 읽기
+        response = s3_client.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=CHUNK_PARAM_S3_KEY)
+        content = response['Body'].read().decode('utf-8')
 
-                if len(parts) != 3:
-                    logger.warning(f"⚠️ Line {line_number} skipped: expected 3 parts but got {len(parts)} -> {parts}")
-                    continue
+        for line_number, line in enumerate(content.strip().splitlines(), start=1):
+            logger.debug(f"📄 Line {line_number}: {repr(line)}")
+            parts = line.strip().split('|')
 
-                name, size_str, overlap_str = parts[0].strip(), parts[1].strip(), parts[2].strip()
-                logger.debug(f"🔎 Parsed -> name='{name}', size='{size_str}', overlap='{overlap_str}'")
+            if len(parts) != 3:
+                logger.warning(f"⚠️ Line {line_number} skipped: expected 3 parts but got {len(parts)} -> {parts}")
+                continue
 
-                if name == collection_name.strip():
-                    chunk_size = int(size_str)
-                    chunk_overlap = int(overlap_str)
-                    logger.info(f"✅ Match found: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
-                    return chunk_size, chunk_overlap
+            name, size_str, overlap_str = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            logger.debug(f"🔎 Parsed -> name='{name}', size='{size_str}', overlap='{overlap_str}'")
+
+            if name == collection_name.strip():
+                chunk_size = int(size_str)
+                chunk_overlap = int(overlap_str)
+                logger.info(f"✅ Match found: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
+                return chunk_size, chunk_overlap
 
         logger.warning(f"⚠️ No match found for '{collection_name}', using default values: size={default_chunk_size}, overlap={default_chunk_overlap}")
+        return default_chunk_size, default_chunk_overlap
+
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"File not found in S3: {CHUNK_PARAM_S3_KEY}")
+        raise HTTPException(status_code=500, detail=f"S3 access error: {str(e)}")
     except Exception as e:
-        logger.error(f"❌ Error reading chunk parameters from TXT: {e}")
+        logger.error(f"❌ Error processing chunk parameters from S3: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reading chunk parameters: {str(e)}")
 
     return default_chunk_size, default_chunk_overlap
 
