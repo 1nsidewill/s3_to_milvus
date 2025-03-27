@@ -1,2 +1,8 @@
-live_aichat_medical|1000|100
+live_aichat_medical_3000|3000|300
+live_aichat_medical_1000|1000|100
 live_aichat_medical_700|700|70
+live_aichat_medical_300|300|30
+live_aichat_korea_3000|3000|300
+live_aichat_korea_1000|1000|100
+live_aichat_korea_700|700|70
+live_aichat_korea_300|300|30

@@ -65,36 +65,58 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
         "event_type": "upload"
     }
     """
+    logger.info(f"📩 Received S3 event: {event}")
+
     if event.file_key.endswith('/'):
+        logger.info("📁 Folder creation event detected — skipping")
         return {"status": "Folder creation event ignored"}
 
     prefix_name = event.file_key.split('/')[1]
     filename = urllib.parse.unquote_plus(event.file_key.split('/')[-1])
     file_date = get_file_modified_date(event.bucket_name, event.file_key).isoformat()
-    metadata = DocumentMetadata(filename=filename, file_date=str(file_date), collection_name=prefix_name)
+
+    logger.info(f"📄 File info extracted — prefix: '{prefix_name}', filename: '{filename}', date: '{file_date}'")
+
+    metadata = DocumentMetadata(
+        filename=filename,
+        file_date=str(file_date),
+        collection_name=prefix_name
+    )
+
     event_type = "upload" if event.event_type == "upload" else "delete"
+    logger.info(f"📝 Event type resolved: {event_type}")
 
     if event_type == "upload":
         if not has_collection(prefix_name):
+            logger.info(f"📦 Milvus collection '{prefix_name}' not found — creating new collection")
             create_milvus_collection(prefix_name)
+        logger.info("🚀 Adding background task for document processing")
         background_tasks.add_task(handle_document_processing, event.bucket_name, event.file_key, metadata)
         return {"status": "Processing initiated"}
+
     elif event_type == "delete":
+        logger.info("🗑️ Adding background task for deletion from Milvus")
         background_tasks.add_task(delete_from_milvus, metadata)
         return {"status": "Deletion initiated"}
+
     else:
+        logger.warning(f"⚠️ Invalid event type received: {event.event_type}")
         raise HTTPException(status_code=400, detail="Invalid event type")
+
 
 def get_file_modified_date(bucket_name, file_key):
     decoded_key = urllib.parse.unquote_plus(file_key)
+    logger.debug(f"📅 Fetching modified date for: bucket='{bucket_name}', key='{decoded_key}'")
+
     try:
         response = s3_client.head_object(Bucket=bucket_name, Key=decoded_key)
+        logger.info("✅ File metadata fetched successfully")
         return response['LastModified']
     except ClientError as e:
         if e.response['Error']['Code'] == '404':
-            logger.error(f"Object not found in bucket '{bucket_name}' with key '{decoded_key}'")
+            logger.error(f"❌ Object not found in bucket '{bucket_name}' with key '{decoded_key}'")
         else:
-            logger.error(f"An error occurred: {e}")
+            logger.error(f"💥 Error retrieving object metadata: {e}")
         return datetime.now()
 
 def create_milvus_collection(collection_name: str):
@@ -278,19 +300,23 @@ async def compress_image_pdf(input_pdf: str, output_pdf: str) -> str:
     
 async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, default_chunk_size: int = 3000, default_chunk_overlap: int = 300) -> bool:
     try:
-        # Load chunk size and overlap values from TXT
-        chunk_size, chunk_overlap = get_chunk_params_from_txt(metadata.collection_name, default_chunk_size, default_chunk_overlap)
+        # 📥 Load chunk size and overlap from config
+        chunk_size, chunk_overlap = get_chunk_params_from_txt(
+            metadata.collection_name, default_chunk_size, default_chunk_overlap
+        )
+        logger.info(f"📁 Collection: {metadata.collection_name} | 🔧 Chunk Size: {chunk_size} | 🔁 Overlap: {chunk_overlap}")
 
-        logger.info(f"Collection Name: {metadata.collection_name}, Chunk Size: {chunk_size}, Chunk Overlap: {chunk_overlap}")
-
+        # ✂️ Split the text into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = text_splitter.split_text(document_html)
-        logger.info(f"Split OCR text into {len(chunks)} chunks")
+        logger.info(f"📄 Text split into {len(chunks)} chunks")
 
+        # 🧠 Generate embeddings
         dense_embeddings = generate_dense_embeddings(chunks)
         # sparse_embeddings = generate_sparse_embeddings(chunks)
-        logger.info("Embeddings generated, preparing data for Milvus insertion")
+        logger.info("🧬 Embeddings generated successfully")
 
+        # 📦 Prepare data for insertion
         insert_data = [
             dense_embeddings,
             # sparse_embeddings, 
@@ -299,29 +325,48 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, defau
             chunks
         ]
 
+        # 🚀 Insert into Milvus
         collection = Collection(metadata.collection_name)
-        logger.info(f"Inserting data into Milvus collection: {metadata.collection_name}")
+        logger.info(f"📤 Inserting data into Milvus collection: {metadata.collection_name}")
         collection.insert(insert_data)
         collection.flush()
+
+        # 🧱 Create index if needed and load
         create_index_if_not_exists(collection)
         collection.load()
-        logger.info("Data inserted and indexed in Milvus successfully")
+        logger.info("✅ Data inserted and indexed in Milvus successfully")
+
         return True
     except Exception as e:
-        logger.error(f"Error inserting data into Milvus: {e}")
+        logger.error(f"❌ Error inserting data into Milvus: {e}")
         return False
 
 def get_chunk_params_from_txt(collection_name: str, default_chunk_size: int, default_chunk_overlap: int):
     try:
+        logger.info(f"🔍 Searching chunk params for collection: '{collection_name}'")
+
         with open('chunk_params.txt', 'r') as file:
-            for line in file:
+            for line_number, line in enumerate(file, start=1):
+                logger.debug(f"📄 Line {line_number}: {repr(line)}")
                 parts = line.strip().split('|')
-                if len(parts) == 3 and parts[0] == collection_name:
-                    return int(parts[1]), int(parts[2])
+
+                if len(parts) != 3:
+                    logger.warning(f"⚠️ Line {line_number} skipped: expected 3 parts but got {len(parts)} -> {parts}")
+                    continue
+
+                name, size_str, overlap_str = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                logger.debug(f"🔎 Parsed -> name='{name}', size='{size_str}', overlap='{overlap_str}'")
+
+                if name == collection_name.strip():
+                    chunk_size = int(size_str)
+                    chunk_overlap = int(overlap_str)
+                    logger.info(f"✅ Match found: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
+                    return chunk_size, chunk_overlap
+
+        logger.warning(f"⚠️ No match found for '{collection_name}', using default values: size={default_chunk_size}, overlap={default_chunk_overlap}")
     except Exception as e:
-        logger.error(f"Error reading chunk parameters from TXT: {e}")
-    
-    # Return default values if no match is found or an error occurs
+        logger.error(f"❌ Error reading chunk parameters from TXT: {e}")
+
     return default_chunk_size, default_chunk_overlap
 
 def generate_dense_embeddings(texts: List[str]) -> List[List[float]]:
