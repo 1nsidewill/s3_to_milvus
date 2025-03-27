@@ -304,7 +304,7 @@ async def compress_image_pdf(input_pdf: str, output_pdf: str) -> str:
 async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, default_chunk_size: int = 3000, default_chunk_overlap: int = 300) -> bool:
     try:
         # 📥 Load chunk size and overlap from config
-        chunk_size, chunk_overlap = get_chunk_params_from_s3(
+        chunk_size, chunk_overlap = await get_chunk_params_from_s3(
             metadata.collection_name, default_chunk_size, default_chunk_overlap
         )
         logger.info(f"📁 Collection: {metadata.collection_name} | 🔧 Chunk Size: {chunk_size} | 🔁 Overlap: {chunk_overlap}")
