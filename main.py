@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from fastapi import FastAPI, BackgroundTasks, File, UploadFile, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import os
@@ -20,6 +20,8 @@ from pdf2image import convert_from_path
 import aiofiles
 import urllib.parse
 import pandas as pd
+from tempfile import NamedTemporaryFile
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +60,84 @@ class DocumentMetadata(BaseModel):
     filename: str
     file_date: str
     collection_name: str
+
+@app.post("/upload_parse_document")
+async def upload_and_parse_document(file: UploadFile = File(...)):
+    filename = file.filename.lower()
+    ext = os.path.splitext(filename)[1]
+
+    if ext not in [".pdf", ".png", ".jpg", ".jpeg"]:
+        raise HTTPException(status_code=400, detail="Only PDF and image files are supported.")
+
+    ocr_mode = "auto" if ext == ".pdf" else "force"
+
+    try:
+        # 파일을 임시 저장
+        with NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            file_path = tmp.name
+            content = await file.read()
+            tmp.write(content)
+
+        compressed_path = None
+
+        if ext == ".pdf":
+            is_text = is_text_based_pdf(file_path)
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if not is_text and size_mb > 40:
+                compressed_path = file_path.replace(".pdf", "_compressed.pdf")
+                compressed_path = await compress_image_pdf(file_path, compressed_path)
+            target_path = compressed_path if compressed_path else file_path
+        else:
+            target_path = file_path
+
+        with open(target_path, "rb") as f:
+            files = {"document": (os.path.basename(target_path), f, file.content_type)}
+            data = {
+                "output_formats": "['html']",
+                "ocr": ocr_mode,
+                "coordinates": "false",
+                "model": "document-parse"
+            }
+            headers = {"Authorization": f"Bearer {upstage_api_key}"}
+            response = requests.post(upstage_api_url, headers=headers, files=files, data=data)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Document parse failed")
+
+        html = response.json().get("content", {}).get("html")
+        parsed_html = clean_html_to_table_only(html)
+
+        return parsed_html
+
+    finally:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            if compressed_path and os.path.exists(compressed_path):
+                os.remove(compressed_path)
+        except Exception as e:
+            logger.warning(f"❌ 임시 파일 삭제 실패: {e}")
+
+
+def clean_html_to_table_only(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 1. 테이블 이외 태그 제거
+    for tag in soup.find_all():
+        if tag.name not in ["table", "tr", "td", "tbody", "thead"]:
+            tag.unwrap()
+
+    # 2. 테이블 관련 태그 속성 제거
+    for tag in soup.find_all(["table", "tr", "td", "tbody", "thead"]):
+        tag.attrs = {}
+
+    # 3. 스타일 태그 추가 (줄바꿈 제거, 문자열 직접 append)
+    style_tag = soup.new_tag("style")
+    style_tag.append("table, th, td { border: 1px solid black; border-collapse: collapse; padding: 4px; }")
+    soup.insert(0, style_tag)
+
+    return str(soup)
+
 
 @app.post("/process_s3_event")
 async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):

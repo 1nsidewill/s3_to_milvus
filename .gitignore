@@ -1,6 +1,7 @@
 data/
 lambda/
 ai_s3_to_fastapi
+lambda.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
