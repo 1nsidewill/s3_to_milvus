@@ -10,8 +10,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Notion API credentials
-notion_token = "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"  # Replace with your Notion integration token
-notion_database_id = "12f63685a48180298ef2d10867d62bd6"  # Replace with your Notion database ID
+notion_token = ""  # Replace with your Notion integration token
+notion_database_id = ""
 
 def send_notion_notification(filename: str, action: str, status: str, elapsed_time: float):
     """Send a notification to Notion with the status of the Lambda call to FastAPI."""
