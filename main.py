@@ -170,9 +170,20 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     logger.info(f"📝 Event type resolved: {event_type}")
 
     if event_type == "upload":
-        if not has_collection(prefix_name):
+        # ✅ 중복 방지 체크
+        if has_collection(prefix_name):
+            collection = Collection(prefix_name)
+            collection.load()
+            expr = f'file_name == "{filename}"'
+            existing = collection.query(expr, output_fields=["file_name"])
+            if existing:
+                logger.info(f"⏩ Duplicate detected — skipping background task for '{filename}' in '{prefix_name}'")
+                return {"status": "Duplicate — already processed"}
+
+        else:
             logger.info(f"📦 Milvus collection '{prefix_name}' not found — creating new collection")
             create_milvus_collection(prefix_name)
+
         logger.info("🚀 Adding background task for document processing")
         background_tasks.add_task(handle_document_processing, event.bucket_name, event.file_key, metadata)
         return {"status": "Processing initiated"}
@@ -185,7 +196,6 @@ async def process_s3_event(event: S3Event, background_tasks: BackgroundTasks):
     else:
         logger.warning(f"⚠️ Invalid event type received: {event.event_type}")
         raise HTTPException(status_code=400, detail="Invalid event type")
-
 
 def get_file_modified_date(bucket_name, file_key):
     decoded_key = urllib.parse.unquote_plus(file_key)
