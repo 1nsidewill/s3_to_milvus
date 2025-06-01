@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import os
 import requests
 import asyncio
-from typing import List
+from typing import List, Tuple
 import boto3
 from pymilvus import Collection, CollectionSchema, FieldSchema, DataType, connections, has_collection
 from langchain_openai import OpenAIEmbeddings
@@ -405,22 +405,33 @@ async def insert_to_milvus(document_html: str, metadata: DocumentMetadata, defau
         logger.info(f"📄 Text split into {len(chunks)} chunks")
 
         # 🧠 Generate embeddings
-        dense_embeddings = generate_dense_embeddings(chunks)
+        dense_embeddings, successful_chunks = generate_dense_embeddings(chunks)
         # sparse_embeddings = generate_sparse_embeddings(chunks)
         logger.info("🧬 Embeddings generated successfully")
+
+        # 🔍 Ensure data consistency - use successful chunks
+        if len(dense_embeddings) != len(successful_chunks):
+            logger.error(f"❌ Embedding count ({len(dense_embeddings)}) doesn't match successful chunk count ({len(successful_chunks)})")
+            return False
+
+        if len(dense_embeddings) == 0:
+            logger.error("❌ No embeddings were generated successfully")
+            return False
+
+        logger.info(f"📊 Using {len(successful_chunks)} successful chunks out of {len(chunks)} original chunks")
 
         # 📦 Prepare data for insertion
         insert_data = [
             dense_embeddings,
             # sparse_embeddings, 
-            [metadata.filename] * len(chunks), 
-            [metadata.file_date] * len(chunks), 
-            chunks
+            [metadata.filename] * len(successful_chunks), 
+            [metadata.file_date] * len(successful_chunks), 
+            successful_chunks
         ]
 
         # 🚀 Insert into Milvus
         collection = Collection(metadata.collection_name)
-        logger.info(f"📤 Inserting data into Milvus collection: {metadata.collection_name}")
+        logger.info(f"📤 Inserting {len(successful_chunks)} records into Milvus collection: {metadata.collection_name}")
         collection.insert(insert_data)
         collection.flush()
 
@@ -472,9 +483,45 @@ async def get_chunk_params_from_s3(collection_name: str, default_chunk_size: int
 
     return default_chunk_size, default_chunk_overlap
 
-def generate_dense_embeddings(texts: List[str]) -> List[List[float]]:
-    logger.info("Generating dense embeddings for text chunks")
-    return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY, model="text-embedding-3-large").embed_documents(texts)
+def generate_dense_embeddings(texts: List[str]) -> Tuple[List[List[float]], List[str]]:
+    logger.info(f"Generating dense embeddings for {len(texts)} text chunks")
+    
+    # OpenAI API has a limit of 300,000 tokens per request
+    # Use a smaller batch size to be safe (approximately 6000 tokens per chunk)
+    batch_size = 20  # Process 20 chunks at a time to stay well under the limit
+    all_embeddings = []
+    successful_chunks = []
+    
+    embeddings_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY, model="text-embedding-3-large")
+    
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i:i + batch_size]
+        logger.info(f"Processing batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size} ({len(batch_texts)} chunks)")
+        
+        try:
+            batch_embeddings = embeddings_model.embed_documents(batch_texts)
+            all_embeddings.extend(batch_embeddings)
+            successful_chunks.extend(batch_texts)
+            logger.info(f"✅ Successfully processed batch {i//batch_size + 1}")
+        except Exception as e:
+            logger.error(f"❌ Error processing batch {i//batch_size + 1}: {e}")
+            # If batch fails, try processing one by one
+            for j, text in enumerate(batch_texts):
+                try:
+                    single_embedding = embeddings_model.embed_documents([text])
+                    all_embeddings.extend(single_embedding)
+                    successful_chunks.append(text)
+                    logger.info(f"✅ Successfully processed individual chunk {i + j + 1}")
+                except Exception as single_e:
+                    logger.error(f"❌ Failed to process chunk {i + j + 1}: {single_e}")
+                    # Skip this chunk and continue
+                    continue
+    
+    logger.info(f"Generated {len(all_embeddings)} embeddings successfully out of {len(texts)} chunks")
+    if len(all_embeddings) < len(texts):
+        logger.warning(f"⚠️ {len(texts) - len(all_embeddings)} chunks failed to generate embeddings")
+    
+    return all_embeddings, successful_chunks
 
 def generate_sparse_embeddings(texts: List[str]) -> List[List[float]]:
     logger.info("Generating sparse embeddings for text chunks")
